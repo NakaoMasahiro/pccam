@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>Pixel Art Camera</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.js"></script>
+</head>
+<body>
+<script>
+let video;
+const pixelSize = 16; // ドットの大きさ（数字を大きくするとより粗いドット絵になります）
+
+function setup() {
+    createCanvas(640, 480);
+    // Webカメラの映像を取得（非表示にしてキャンバスにドットとして描画する）
+    video = createCapture(VIDEO);
+    video.size(640, 480);
+    video.hide(); 
+    noStroke();
+}
+
+function draw() {
+    background(0);
+    
+    // カメラのピクセルデータを読み込み
+    video.loadPixels();
+    
+    // 画面を格子状にループ処理
+    for (let y = 0; y < video.height; y += pixelSize) {
+        for (let x = 0; x < video.width; x += pixelSize) {
+            
+            // 鏡写し（ミラー効果）にするためにX座標を反転させてピクセルの色を取得
+            let index = ((video.width - x - 1) + y * video.width) * 4;
+            
+            let r = video.pixels[index];
+            let g = video.pixels[index + 1];
+            let b = video.pixels[index + 2];
+            
+            // 取得した色で四角形（ドット）を描画
+            fill(r, g, b);
+            rect(x, y, pixelSize, pixelSize);
+        }
+    }
+}
+</script>
+</body>
+</html>
