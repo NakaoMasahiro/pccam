@@ -2,78 +2,168 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>Interactive Audio-Visual Camera</title>
+    <title>3D Interactive Voxel Camera</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/addons/p5.sound.min.js"></script>
+    <style>
+        body { margin: 0; background-color: #1a1a1a; color: #fff; font-family: sans-serif; }
+        canvas { display: block; }
+        #ui-container {
+            position: absolute; top: 10px; left: 10px; 
+            background: rgba(0, 0, 0, 0.75); padding: 15px; 
+            border-radius: 8px; border: 1px solid #deff9a;
+            max-width: 240px; box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+        }
+        .ui-element { margin-bottom: 12px; }
+        label { display: block; font-size: 12px; color: #deff9a; margin-bottom: 4px; }
+        select, input { width: 100%; background: #333; color: #fff; border: 1px solid #555; padding: 4px; border-radius: 4px; }
+    </style>
 </head>
 <body>
+
+<div id="ui-container">
+    <div class="ui-element">
+        <label for="sizeSelect">ドットの解像度（サイズ）</label>
+        <select id="sizeSelect">
+            <option value="24">粗い（高速）</option>
+            <option value="16" selected>普通</option>
+            <option value="10">細かい（負荷高）</option>
+        </select>
+    </div>
+    <div class="ui-element">
+        <label for="shapeSelect">ボクセルの形状</label>
+        <select id="shapeSelect">
+            <option value="box">立方体 (Box)</option>
+            <option value="sphere">球体 (Sphere)</option>
+            <option value="cone">円錐 (Cone)</option>
+        </select>
+    </div>
+    <div class="ui-element">
+        <label for="colorSelect">カラーモード</label>
+        <select id="colorSelect">
+            <option value="0">フルカラー</option>
+            <option value="1">モノクローム</option>
+            <option value="2">サイバー（緑）</option>
+        </select>
+    </div>
+    <div class="ui-element">
+        <label>マイク音量感度</label>
+        <input type="range" id="micSlider" min="0" max="100" value="50">
+    </div>
+    <div style="font-size: 10px; color: #aaa; margin-top: 10px;">
+        ※画面をドラッグするとカメラアングルを3D回転できます。
+    </div>
+</div>
+
 <script>
 let video;
-let mic; // マイク入力を管理する変数
+let mic;
+
+// UI要素の取得用
+let sizeSelect, shapeSelect, colorSelect, micSlider;
 
 function setup() {
-    createCanvas(640, 480);
+    // 3Dモード（WEBGL）でキャンバスを作成
+    createCanvas(windowWidth, windowHeight, WEBGL);
     
     // カメラのセットアップ
     video = createCapture(VIDEO);
     video.size(640, 480);
     video.hide(); 
-    noStroke();
 
-    // マイク入力を開始
+    // マイクのセットアップ
     mic = new p5.AudioIn();
     mic.start();
+
+    // HTMLのUI要素とJavaScriptの紐付け
+    sizeSelect = select('#sizeSelect');
+    shapeSelect = select('#shapeSelect');
+    colorSelect = select('#colorSelect');
+    micSlider = select('#micSlider');
 }
 
 function draw() {
-    background(0);
+    background(20);
     
-    // 1. マイクの音量を取得（0.0 〜 1.0 の間で値が返ってきます）
-    let vol = mic.getLevel();
-    
-    // 音量（通常は0.1以下など小さな値）を、ドットの最低サイズ〜最大サイズに変換
-    // 声が大きければ大きいほど、ドットが大きくなります
-    let pixelSize = map(vol, 0, 0.3, 8, 48, true);
-    // 小数点を切り捨てて整数にする
-    pixelSize = floor(pixelSize);
+    // 3D空間のライトを設定（立体感を出すため）
+    ambientLight(80); // 環境光
+    directionalLight(255, 255, 255, 0.5, 1, -0.5); // 斜め上からの平行光源
 
-    // 2. マウスのX座標（左右の位置）の割合を取得（0.0 〜 1.0）
-    let mouseRatio = mouseX / width;
-    // 画面外にマウスがある時のためのエラー防止
-    mouseRatio = constrain(mouseRatio, 0, 1);
+    // マウスドラッグで3D空間を自由に回転できるようにする（EasyCamの簡易版）
+    orbitControl();
+
+    // UIからの設定値を取得
+    let pixelSize = int(sizeSelect.value());
+    let currentShape = shapeSelect.value();
+    let currentColorMode = int(colorSelect.value());
+    let micSensitivity = micSlider.value() / 50.0; // 感度の調整倍率
+
+    // マイク音量の取得と反映
+    let vol = mic.getLevel() * micSensitivity;
+    // 音量に応じて、ボクセルが手前に飛び出す最大の深さを変える
+    let maxDepth = map(vol, 0, 0.5, 50, 300, true);
 
     video.loadPixels();
-    
+
+    // 3D空間の中心に配置するために座標をオフセット
+    translate(-video.width / 2, -video.height / 2, 0);
+
+    // グリッド状にスキャン
     for (let y = 0; y < video.height; y += pixelSize) {
         for (let x = 0; x < video.width; x += pixelSize) {
             
+            // 鏡写しのインデックス計算
             let index = ((video.width - x - 1) + y * video.width) * 4;
             
             let r = video.pixels[index];
             let g = video.pixels[index + 1];
             let b = video.pixels[index + 2];
             
-            // --- マウスの位置で色味（チャンネル）を変化させる ---
-            // 左側（0%）：サイケデリックな赤強調
-            // 中央（50%）：通常のフルカラー
-            // 右側（100%）：青・緑が強調されたサイバーな色味
-            r = r * (1 - mouseRatio) * 2;
-            g = g * mouseRatio * 1.5;
-            b = b * mouseRatio * 2;
-            
-            fill(r, g, b);
-            
-            // 音量が大きい（ドットが大きい）ときは、少し丸みを持たせる（形を円にする）
-            if (pixelSize > 24) {
-                circle(x + pixelSize/2, y + pixelSize/2, pixelSize - 2);
-            } else {
-                rect(x, y, pixelSize - 1, pixelSize - 1);
+            if (r === undefined) continue; // 安全対策
+
+            // 明るさ（輝度）を計算。0〜255の値になる
+            let brightnessValue = (r + g + b) / 3;
+
+            // カラーモードの適用
+            if (currentColorMode === 1) {
+                r = g = b = brightnessValue; // モノクロ
+            } else if (currentColorMode === 2) {
+                r = brightnessValue * 0.1;
+                g = brightnessValue * 0.9; // 緑強調
+                b = brightnessValue * 0.1;
             }
+
+            // 3Dオブジェクトの塗りと線の設定
+            fill(r, g, b);
+            noStroke();
+
+            // 明るい場所ほど手前（Z軸プラス方向）に飛び出させる
+            let z = map(brightnessValue, 0, 255, 0, maxDepth);
+
+            // 該当の座標に移動して3Dプリミティブを描画
+            push();
+            translate(x, y, z);
+
+            // 選択された形状に基づいて描画
+            if (currentShape === 'box') {
+                box(pixelSize - 1, pixelSize - 1, pixelSize + z); // 奥行きを持たせた直方体
+            } else if (currentShape === 'sphere') {
+                sphere(pixelSize / 2);
+            } else if (currentShape === 'cone') {
+                rotateX(HALF_PI); // 円錐を正面に向ける
+                cone(pixelSize / 2, pixelSize);
+            }
+            pop();
         }
     }
 }
 
-// ブラウザのセキュリティ対策：画面をクリックしたときにオーディオを確実に有効化する
+// 画面サイズが変更されたらキャンバスを自動追従
+function windowResized() {
+    resizeCanvas(windowWidth, windowHeight);
+}
+
+// オーディオの有効化対策
 function touchStarted() {
     getAudioContext().resume();
 }
